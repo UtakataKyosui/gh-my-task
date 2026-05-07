@@ -30,6 +30,11 @@ var (
 			Bold(true).
 			SetString("[AR]")
 
+	badgeIssue = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("78")).
+			Bold(true).
+			SetString("[I]")
+
 	draftStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("243")).
 			SetString("draft")

@@ -33,11 +33,13 @@ func main() {
 	}
 
 	var (
-		jsonMode     bool
-		state        string
-		authorOnly   bool
-		reviewOnly   bool
+		jsonMode    bool
+		state       string
+		authorOnly  bool
+		reviewOnly  bool
 		includeDraft bool
+		withIssues  bool
+		issuesOnly  bool
 	)
 
 	flag.BoolVar(&jsonMode, "json", false, "output JSON instead of TUI")
@@ -50,6 +52,9 @@ func main() {
 	flag.BoolVar(&reviewOnly, "r", false, "show only PRs where review is requested")
 	flag.BoolVar(&includeDraft, "include-drafts", true, "include draft PRs")
 	flag.BoolVar(&includeDraft, "d", true, "include draft PRs")
+	flag.BoolVar(&withIssues, "with-issues", false, "also show assigned issues alongside PRs")
+	flag.BoolVar(&withIssues, "I", false, "also show assigned issues alongside PRs")
+	flag.BoolVar(&issuesOnly, "issues-only", false, "show only assigned issues (no PRs)")
 
 	var withReviews bool
 	flag.BoolVar(&withReviews, "with-reviews", false, "fetch review status for each PR (slower)")
@@ -67,6 +72,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if issuesOnly {
+		withIssues = true
+	}
+
 	repo, err := repository.Current()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: not in a GitHub repository (no remote found)")
@@ -77,35 +86,47 @@ func main() {
 	owner := repo.Owner
 	name := repo.Name
 
-	opts := ghclient.Options{
-		State:        state,
-		AuthorOnly:   authorOnly,
-		ReviewOnly:   reviewOnly,
-		IncludeDraft: includeDraft,
-		WithReviews:  withReviews,
+	var prs []ghclient.PR
+	if !issuesOnly {
+		opts := ghclient.Options{
+			State:        state,
+			AuthorOnly:   authorOnly,
+			ReviewOnly:   reviewOnly,
+			IncludeDraft: includeDraft,
+			WithReviews:  withReviews,
+		}
+		prs, err = ghclient.Fetch(owner, name, opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to fetch PRs: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	prs, err := ghclient.Fetch(owner, name, opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: failed to fetch PRs: %v\n", err)
-		os.Exit(1)
+	var issues []ghclient.Issue
+	if withIssues {
+		issueOpts := ghclient.IssueOptions{State: state}
+		issues, err = ghclient.FetchIssues(owner, name, issueOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to fetch issues: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if jsonMode {
 		user := ghclient.CurrentUser()
-		if err := jsonout.Print(owner, name, user, prs); err != nil {
+		if err := jsonout.Print(owner, name, user, prs, issues); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	if len(prs) == 0 {
-		fmt.Printf("No PRs found in %s/%s\n", owner, name)
+	if len(prs) == 0 && len(issues) == 0 {
+		fmt.Printf("No tasks found in %s/%s\n", owner, name)
 		return
 	}
 
-	if err := tui.Run(owner, name, prs); err != nil {
+	if err := tui.Run(owner, name, prs, issues); err != nil {
 		fmt.Fprintf(os.Stderr, "error: TUI failed: %v\n", err)
 		os.Exit(1)
 	}

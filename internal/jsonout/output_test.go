@@ -16,7 +16,7 @@ var testPRs = []ghclient.PR{
 
 func TestPrintMatchesWriteFile(t *testing.T) {
 	// Capture stdout output from Print.
-	out := Build("owner", "repo", "user", testPRs)
+	out := Build("owner", "repo", "user", testPRs, nil)
 	var buf bytes.Buffer
 	if err := Write(&buf, out); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -51,7 +51,7 @@ func TestWriteFileAtomicNoTmpOnSuccess(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "current.json")
 
-	if err := WriteFile(path, "o", "r", "u", testPRs); err != nil {
+	if err := WriteFile(path, "o", "r", "u", testPRs, nil); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
@@ -65,7 +65,7 @@ func TestWriteFileAtomicNoTmpOnSuccess(t *testing.T) {
 func TestWriteFileMkdirAll(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a", "b", "c", "current.json")
-	if err := WriteFile(path, "o", "r", "u", nil); err != nil {
+	if err := WriteFile(path, "o", "r", "u", nil, nil); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {

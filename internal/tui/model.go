@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cli/go-gh/v2/pkg/browser"
 )
+
+func updatedAt(item list.Item) time.Time {
+	switch it := item.(type) {
+	case prItem:
+		return it.pr.UpdatedAt
+	case issueItem:
+		return it.issue.UpdatedAt
+	}
+	return time.Time{}
+}
 
 type prItem struct {
 	pr ghclient.PR
@@ -33,6 +44,17 @@ func (p prItem) Description() string {
 		reviewSummary = " · " + formatReviewSummary(p.pr.Reviews)
 	}
 	return fmt.Sprintf("#%d · %s · %s%s%s", p.pr.Number, p.pr.Author, ago, draft, reviewSummary)
+}
+
+type issueItem struct {
+	issue ghclient.Issue
+}
+
+func (i issueItem) FilterValue() string { return i.issue.Title }
+func (i issueItem) Title() string       { return badgeIssue.String() + " " + i.issue.Title }
+func (i issueItem) Description() string {
+	ago := humanTime(i.issue.UpdatedAt)
+	return fmt.Sprintf("#%d · by %s · %s", i.issue.Number, i.issue.Author, ago)
 }
 
 func badge(pr ghclient.PR) string {
@@ -121,8 +143,9 @@ func humanTime(t time.Time) string {
 }
 
 type closeResultMsg struct {
-	number int
-	err    error
+	number  int
+	isIssue bool
+	err     error
 }
 
 type model struct {
@@ -132,6 +155,7 @@ type model struct {
 	list       list.Model
 	preview    viewport.Model
 	prs        []ghclient.PR
+	issues     []ghclient.Issue
 	ready      bool
 	width      int
 	height     int
@@ -141,11 +165,17 @@ type model struct {
 	closeErr   string
 }
 
-func Run(owner, name string, prs []ghclient.PR) error {
-	items := make([]list.Item, len(prs))
-	for i, pr := range prs {
-		items[i] = prItem{pr}
+func Run(owner, name string, prs []ghclient.PR, issues []ghclient.Issue) error {
+	items := make([]list.Item, 0, len(prs)+len(issues))
+	for _, pr := range prs {
+		items = append(items, prItem{pr})
 	}
+	for _, issue := range issues {
+		items = append(items, issueItem{issue})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return updatedAt(items[i]).After(updatedAt(items[j]))
+	})
 
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
@@ -169,6 +199,7 @@ func Run(owner, name string, prs []ghclient.PR) error {
 		list:       l,
 		preview:    vp,
 		prs:        prs,
+		issues:     issues,
 		closeInput: ti,
 	}
 
@@ -208,18 +239,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		items := m.list.Items()
 		newItems := make([]list.Item, 0, len(items))
 		for _, item := range items {
-			if pr, ok := item.(prItem); ok && pr.pr.Number != msg.number {
-				newItems = append(newItems, item)
+			switch it := item.(type) {
+			case prItem:
+				if msg.isIssue || it.pr.Number != msg.number {
+					newItems = append(newItems, item)
+				}
+			case issueItem:
+				if !msg.isIssue || it.issue.Number != msg.number {
+					newItems = append(newItems, item)
+				}
 			}
 		}
 		m.list.SetItems(newItems)
-		newPRs := make([]ghclient.PR, 0, len(m.prs))
-		for _, pr := range m.prs {
-			if pr.Number != msg.number {
-				newPRs = append(newPRs, pr)
+		if msg.isIssue {
+			newIssues := make([]ghclient.Issue, 0, len(m.issues))
+			for _, issue := range m.issues {
+				if issue.Number != msg.number {
+					newIssues = append(newIssues, issue)
+				}
 			}
+			m.issues = newIssues
+		} else {
+			newPRs := make([]ghclient.PR, 0, len(m.prs))
+			for _, pr := range m.prs {
+				if pr.Number != msg.number {
+					newPRs = append(newPRs, pr)
+				}
+			}
+			m.prs = newPRs
 		}
-		m.prs = newPRs
 		m.preview.SetContent(m.buildPreview())
 		return m, nil
 
@@ -253,11 +301,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(msg, keys.Close):
-			if sel, ok := m.list.SelectedItem().(prItem); ok {
+			switch sel := m.list.SelectedItem().(type) {
+			case prItem:
 				m.closeMode = true
 				m.closeErr = ""
 				m.closeInput.Reset()
 				m.closeInput.Placeholder = strconv.Itoa(sel.pr.Number)
+				return m, m.closeInput.Focus()
+			case issueItem:
+				m.closeMode = true
+				m.closeErr = ""
+				m.closeInput.Reset()
+				m.closeInput.Placeholder = strconv.Itoa(sel.issue.Number)
 				return m, m.closeInput.Focus()
 			}
 			return m, nil
@@ -282,11 +337,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) doClose() tea.Cmd {
+	input := strings.TrimSpace(m.closeInput.Value())
+	owner := m.owner
+	name := m.name
+
+	if isi, ok := m.list.SelectedItem().(issueItem); ok {
+		expected := strconv.Itoa(isi.issue.Number)
+		if input != expected {
+			return func() tea.Msg {
+				return closeResultMsg{err: fmt.Errorf("番号が一致しません（期待: %s）", expected)}
+			}
+		}
+		number := isi.issue.Number
+		return func() tea.Msg {
+			err := ghclient.CloseIssue(owner, name, number)
+			return closeResultMsg{number: number, isIssue: true, err: err}
+		}
+	}
+
 	sel, ok := m.list.SelectedItem().(prItem)
 	if !ok {
 		return nil
 	}
-	input := strings.TrimSpace(m.closeInput.Value())
 	expected := strconv.Itoa(sel.pr.Number)
 	if input != expected {
 		return func() tea.Msg {
@@ -294,24 +366,26 @@ func (m model) doClose() tea.Cmd {
 		}
 	}
 	number := sel.pr.Number
-	owner := m.owner
-	name := m.name
 	return func() tea.Msg {
 		err := ghclient.ClosePR(owner, name, number)
-		return closeResultMsg{number: number, err: err}
+		return closeResultMsg{number: number, isIssue: false, err: err}
 	}
 }
 
 func (m model) buildPreview() string {
-	if len(m.prs) == 0 {
-		return "No PRs found."
+	if len(m.list.Items()) == 0 {
+		return "No tasks found."
 	}
-	sel, ok := m.list.SelectedItem().(prItem)
-	if !ok {
-		return ""
+	switch sel := m.list.SelectedItem().(type) {
+	case prItem:
+		return m.buildPRPreview(sel.pr)
+	case issueItem:
+		return m.buildIssuePreview(sel.issue)
 	}
-	pr := sel.pr
+	return ""
+}
 
+func (m model) buildPRPreview(pr ghclient.PR) string {
 	var sb strings.Builder
 
 	sb.WriteString(previewTitleStyle.Render(fmt.Sprintf("#%d %s", pr.Number, pr.Title)))
@@ -327,6 +401,7 @@ func (m model) buildPreview() string {
 	for _, c := range pr.Categories {
 		catLabels = append(catLabels, c)
 	}
+	line("Type", "PR")
 	line("Category", strings.Join(catLabels, ", "))
 	line("Author", pr.Author)
 	line("State", formatState(pr))
@@ -356,6 +431,41 @@ func (m model) buildPreview() string {
 		sb.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
 		sb.WriteString("\n")
 		body := pr.Body
+		if len(body) > 2000 {
+			body = body[:2000] + "\n…"
+		}
+		sb.WriteString(body)
+	}
+
+	return sb.String()
+}
+
+func (m model) buildIssuePreview(issue ghclient.Issue) string {
+	var sb strings.Builder
+
+	sb.WriteString(previewTitleStyle.Render(fmt.Sprintf("#%d %s", issue.Number, issue.Title)))
+	sb.WriteString("\n\n")
+
+	line := func(label, value string) {
+		sb.WriteString(previewLabelStyle.Render(label+": "))
+		sb.WriteString(previewValueStyle.Render(value))
+		sb.WriteString("\n")
+	}
+
+	line("Type", "Issue")
+	line("Author", issue.Author)
+	line("State", issue.State)
+	line("Updated", issue.UpdatedAt.Local().Format("2006-01-02 15:04"))
+	if len(issue.Labels) > 0 {
+		line("Labels", strings.Join(issue.Labels, ", "))
+	}
+	line("URL", issue.URL)
+
+	if issue.Body != "" {
+		sb.WriteString("\n")
+		sb.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
+		sb.WriteString("\n")
+		body := issue.Body
 		if len(body) > 2000 {
 			body = body[:2000] + "\n…"
 		}
@@ -406,8 +516,17 @@ func (m model) View() string {
 
 	var bottom string
 	if m.closeMode {
-		sel, _ := m.list.SelectedItem().(prItem)
-		prompt := confirmPromptStyle.Render(fmt.Sprintf("PR #%d を close します。番号を入力 (Esc でキャンセル): ", sel.pr.Number))
+		var itemType string
+		var itemNum int
+		switch sel := m.list.SelectedItem().(type) {
+		case prItem:
+			itemType = "PR"
+			itemNum = sel.pr.Number
+		case issueItem:
+			itemType = "Issue"
+			itemNum = sel.issue.Number
+		}
+		prompt := confirmPromptStyle.Render(fmt.Sprintf("%s #%d を close します。番号を入力 (Esc でキャンセル): ", itemType, itemNum))
 		bottom = prompt + m.closeInput.View()
 		if m.closeErr != "" {
 			bottom += "  " + errorStyle.Render(m.closeErr)
@@ -415,7 +534,7 @@ func (m model) View() string {
 	} else if m.closeErr != "" {
 		bottom = errorStyle.Render(m.closeErr)
 	} else {
-		bottom = helpStyle.Render("↑/↓ navigate · enter open in browser · c close PR · / filter · q quit")
+		bottom = helpStyle.Render("↑/↓ navigate · enter open in browser · c close PR/Issue · / filter · q quit")
 	}
 
 	return top + "\n" + bottom

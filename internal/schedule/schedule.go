@@ -13,6 +13,7 @@ type Filter struct {
 	ReviewOnly   bool   `json:"reviewOnly"`
 	IncludeDraft bool   `json:"includeDraft"`
 	WithReviews  bool   `json:"withReviews"`
+	WithIssues   bool   `json:"withIssues"`
 }
 
 func (f Filter) ToOptions() ghclient.Options {
@@ -23,6 +24,10 @@ func (f Filter) ToOptions() ghclient.Options {
 		IncludeDraft: f.IncludeDraft,
 		WithReviews:  f.WithReviews,
 	}
+}
+
+func (f Filter) ToIssueOptions() ghclient.IssueOptions {
+	return ghclient.IssueOptions{State: f.State}
 }
 
 // duration wraps time.Duration to marshal/unmarshal as human-readable string (e.g. "5m").

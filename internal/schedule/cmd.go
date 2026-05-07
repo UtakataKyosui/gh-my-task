@@ -60,6 +60,7 @@ func RunAdd(args []string) {
 		reviewOnly   bool
 		includeDraft bool
 		withReviews  bool
+		withIssues   bool
 	)
 	fs.StringVar(&intervalStr, "interval", "5m", "fetch interval (e.g. 1m, 10m, 1h)")
 	fs.StringVar(&state, "state", "open", "PR state: open, closed, all")
@@ -72,6 +73,8 @@ func RunAdd(args []string) {
 	fs.BoolVar(&includeDraft, "d", true, "include draft PRs")
 	fs.BoolVar(&withReviews, "with-reviews", false, "fetch review status (slower)")
 	fs.BoolVar(&withReviews, "R", false, "fetch review status (slower)")
+	fs.BoolVar(&withIssues, "with-issues", false, "also fetch assigned issues")
+	fs.BoolVar(&withIssues, "I", false, "also fetch assigned issues")
 	_ = fs.Parse(args)
 
 	interval, err := time.ParseDuration(intervalStr)
@@ -111,6 +114,7 @@ func RunAdd(args []string) {
 			ReviewOnly:   reviewOnly,
 			IncludeDraft: includeDraft,
 			WithReviews:  withReviews,
+			WithIssues:   withIssues,
 		},
 		CreatedAt: time.Now().UTC(),
 	}
