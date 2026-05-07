@@ -22,10 +22,15 @@ func main() {
 	)
 
 	flag.BoolVar(&jsonMode, "json", false, "output JSON instead of TUI")
+	flag.BoolVar(&jsonMode, "j", false, "output JSON instead of TUI")
 	flag.StringVar(&state, "state", "open", "PR state: open, closed, all")
+	flag.StringVar(&state, "s", "open", "PR state: open, closed, all")
 	flag.BoolVar(&authorOnly, "author-only", false, "show only PRs you authored")
+	flag.BoolVar(&authorOnly, "a", false, "show only PRs you authored")
 	flag.BoolVar(&reviewOnly, "review-only", false, "show only PRs where review is requested")
+	flag.BoolVar(&reviewOnly, "r", false, "show only PRs where review is requested")
 	flag.BoolVar(&includeDraft, "include-drafts", true, "include draft PRs")
+	flag.BoolVar(&includeDraft, "d", true, "include draft PRs")
 	flag.Parse()
 
 	if authorOnly && reviewOnly {
