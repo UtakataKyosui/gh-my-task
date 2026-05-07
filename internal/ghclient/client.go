@@ -330,6 +330,20 @@ func FetchOne(owner, name string, number int) (PR, error) {
 	return pr, nil
 }
 
+func CurrentUser() string {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Login string `json:"login"`
+	}
+	if err := client.Get("user", &resp); err != nil {
+		return ""
+	}
+	return resp.Login
+}
+
 func ClosePR(owner, name string, number int) error {
 	client, err := api.DefaultRESTClient()
 	if err != nil {

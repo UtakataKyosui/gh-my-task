@@ -9,8 +9,8 @@ import (
 	"github.com/UtakataKyosui/gh-my-task/internal/ghclient"
 	"github.com/UtakataKyosui/gh-my-task/internal/install"
 	"github.com/UtakataKyosui/gh-my-task/internal/jsonout"
+	"github.com/UtakataKyosui/gh-my-task/internal/schedule"
 	"github.com/UtakataKyosui/gh-my-task/internal/tui"
-	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/repository"
 )
 
@@ -25,6 +25,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "install" {
 		install.Run()
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "schedule" {
+		schedule.Dispatch(os.Args[2:])
 		return
 	}
 
@@ -88,7 +92,7 @@ func main() {
 	}
 
 	if jsonMode {
-		user := currentUser()
+		user := ghclient.CurrentUser()
 		if err := jsonout.Print(owner, name, user, prs); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -196,16 +200,3 @@ func runClose(args []string) {
 	fmt.Printf("✓ PR #%d を close しました\n", number)
 }
 
-func currentUser() string {
-	client, err := api.DefaultRESTClient()
-	if err != nil {
-		return ""
-	}
-	var resp struct {
-		Login string `json:"login"`
-	}
-	if err := client.Get("user", &resp); err != nil {
-		return ""
-	}
-	return resp.Login
-}

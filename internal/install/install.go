@@ -22,6 +22,10 @@ const claudeMDSection = `
 | ` + "`gh my-task -R`" + ` | レビュー状況付きで取得（インジケーター表示） |
 | ` + "`gh my-task prompt <N>`" + ` | PR #N のレビュー対応 Markdown プロンプトを stdout に出力 |
 | ` + "`gh my-task close <N>`" + ` | PR #N を close（番号入力確認あり） |
+| ` + "`gh my-task schedule add [--interval 5m]`" + ` | 現在リポジトリを定期スナップショット登録 |
+| ` + "`gh my-task schedule list`" + ` | 全スケジュール一覧 |
+| ` + "`gh my-task schedule remove`" + ` | 現在リポジトリのスケジュール削除 |
+| ` + "`gh my-task schedule stop`" + ` | デーモン停止 |
 
 ### 主なフラグ
 
@@ -121,7 +125,8 @@ gh my-task close <PR番号>   # PR番号の入力確認後に close
 func Run() {
 	r := bufio.NewReader(os.Stdin)
 
-	fmt.Println("gh-my-task の使い方を Claude Code に知識として追加します。\n")
+	fmt.Println("gh-my-task の使い方を Claude Code に知識として追加します。")
+	fmt.Println()
 	fmt.Println("追加先を選択してください:")
 	fmt.Println("  1. ユーザーレベル  — ~/.claude/CLAUDE.md に追記")
 	fmt.Println("  2. プロジェクトレベル — .claude/skills/gh-my-task/SKILL.md を作成")
