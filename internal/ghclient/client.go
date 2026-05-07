@@ -1,6 +1,8 @@
 package ghclient
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -182,4 +184,55 @@ func appendUniq(slice []string, val string) []string {
 		}
 	}
 	return append(slice, val)
+}
+
+func FetchOne(owner, name string, number int) (PR, error) {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return PR{}, fmt.Errorf("failed to create API client: %w", err)
+	}
+	var resp struct {
+		Number    int    `json:"number"`
+		Title     string `json:"title"`
+		HTMLURL   string `json:"html_url"`
+		State     string `json:"state"`
+		Draft     bool   `json:"draft"`
+		UpdatedAt string `json:"updated_at"`
+		Body      string `json:"body"`
+		User      struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, name, number)
+	if err := client.Get(path, &resp); err != nil {
+		return PR{}, err
+	}
+	t, _ := time.Parse(time.RFC3339, resp.UpdatedAt)
+	return PR{
+		Number:    resp.Number,
+		Title:     resp.Title,
+		URL:       resp.HTMLURL,
+		Author:    resp.User.Login,
+		State:     resp.State,
+		IsDraft:   resp.Draft,
+		UpdatedAt: t,
+		Body:      resp.Body,
+	}, nil
+}
+
+func ClosePR(owner, name string, number int) error {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return fmt.Errorf("failed to create API client: %w", err)
+	}
+	bodyBytes, err := json.Marshal(map[string]string{"state": "closed"})
+	if err != nil {
+		return err
+	}
+	var resp interface{}
+	return client.Patch(
+		fmt.Sprintf("repos/%s/%s/pulls/%d", owner, name, number),
+		bytes.NewReader(bodyBytes),
+		&resp,
+	)
 }

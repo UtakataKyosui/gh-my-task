@@ -2,12 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/UtakataKyosui/gh-my-task/internal/ghclient"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -65,15 +67,25 @@ func humanTime(t time.Time) string {
 	}
 }
 
+type closeResultMsg struct {
+	number int
+	err    error
+}
+
 type model struct {
-	repo     string
-	list     list.Model
-	preview  viewport.Model
-	prs      []ghclient.PR
-	ready    bool
-	width    int
-	height   int
-	quitting bool
+	owner      string
+	name       string
+	repo       string
+	list       list.Model
+	preview    viewport.Model
+	prs        []ghclient.PR
+	ready      bool
+	width      int
+	height     int
+	quitting   bool
+	closeMode  bool
+	closeInput textinput.Model
+	closeErr   string
 }
 
 func Run(owner, name string, prs []ghclient.PR) error {
@@ -93,11 +105,18 @@ func Run(owner, name string, prs []ghclient.PR) error {
 
 	vp := viewport.New(0, 0)
 
+	ti := textinput.New()
+	ti.Placeholder = "PR番号"
+	ti.CharLimit = 10
+
 	m := model{
-		repo:    fmt.Sprintf("%s/%s", owner, name),
-		list:    l,
-		preview: vp,
-		prs:     prs,
+		owner:      owner,
+		name:       name,
+		repo:       fmt.Sprintf("%s/%s", owner, name),
+		list:       l,
+		preview:    vp,
+		prs:        prs,
+		closeInput: ti,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -118,7 +137,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		listW := msg.Width / 2
 		previewW := msg.Width - listW - 1
-		// reserve 2 lines for help bar + title
 		contentH := msg.Height - 3
 		m.list.SetSize(listW, contentH)
 		m.preview.Width = previewW
@@ -126,7 +144,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.preview.SetContent(m.buildPreview())
 
+	case closeResultMsg:
+		m.closeMode = false
+		m.closeInput.Reset()
+		if msg.err != nil {
+			m.closeErr = msg.err.Error()
+			return m, nil
+		}
+		m.closeErr = ""
+		items := m.list.Items()
+		newItems := make([]list.Item, 0, len(items))
+		for _, item := range items {
+			if pr, ok := item.(prItem); ok && pr.pr.Number != msg.number {
+				newItems = append(newItems, item)
+			}
+		}
+		m.list.SetItems(newItems)
+		newPRs := make([]ghclient.PR, 0, len(m.prs))
+		for _, pr := range m.prs {
+			if pr.Number != msg.number {
+				newPRs = append(newPRs, pr)
+			}
+		}
+		m.prs = newPRs
+		m.preview.SetContent(m.buildPreview())
+		return m, nil
+
 	case tea.KeyMsg:
+		if m.closeMode {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.closeMode = false
+				m.closeErr = ""
+				m.closeInput.Reset()
+				return m, nil
+			case tea.KeyEnter:
+				return m, m.doClose()
+			}
+			var cmd tea.Cmd
+			m.closeInput, cmd = m.closeInput.Update(msg)
+			return m, cmd
+		}
+
 		if m.list.FilterState() == list.Filtering {
 			break
 		}
@@ -138,6 +197,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel, ok := m.list.SelectedItem().(prItem); ok {
 				b := browser.New("", nil, nil)
 				_ = b.Browse(sel.pr.URL)
+			}
+			return m, nil
+		case key.Matches(msg, keys.Close):
+			if sel, ok := m.list.SelectedItem().(prItem); ok {
+				m.closeMode = true
+				m.closeErr = ""
+				m.closeInput.Reset()
+				m.closeInput.Placeholder = strconv.Itoa(sel.pr.Number)
+				return m, m.closeInput.Focus()
 			}
 			return m, nil
 		}
@@ -158,6 +226,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, vpCmd)
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m model) doClose() tea.Cmd {
+	sel, ok := m.list.SelectedItem().(prItem)
+	if !ok {
+		return nil
+	}
+	input := strings.TrimSpace(m.closeInput.Value())
+	expected := strconv.Itoa(sel.pr.Number)
+	if input != expected {
+		return func() tea.Msg {
+			return closeResultMsg{err: fmt.Errorf("番号が一致しません（期待: %s）", expected)}
+		}
+	}
+	number := sel.pr.Number
+	owner := m.owner
+	name := m.name
+	return func() tea.Msg {
+		err := ghclient.ClosePR(owner, name, number)
+		return closeResultMsg{number: number, err: err}
+	}
 }
 
 func (m model) buildPreview() string {
@@ -198,7 +287,6 @@ func (m model) buildPreview() string {
 		sb.WriteString("\n")
 		sb.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
 		sb.WriteString("\n")
-		// truncate body to avoid huge previews
 		body := pr.Body
 		if len(body) > 2000 {
 			body = body[:2000] + "\n…"
@@ -228,7 +316,6 @@ func (m model) View() string {
 	previewPane := m.preview.View()
 
 	divider := dividerStyle.Render(strings.Repeat("│\n", m.height))
-	// trim divider to content height
 	divLines := strings.Split(divider, "\n")
 	contentH := m.height - 3
 	if contentH < len(divLines) {
@@ -238,7 +325,19 @@ func (m model) View() string {
 
 	top := lipgloss.JoinHorizontal(lipgloss.Top, listPane, divider, previewPane)
 
-	help := helpStyle.Render("↑/↓ navigate · enter open in browser · / filter · q quit")
+	var bottom string
+	if m.closeMode {
+		sel, _ := m.list.SelectedItem().(prItem)
+		prompt := confirmPromptStyle.Render(fmt.Sprintf("PR #%d を close します。番号を入力 (Esc でキャンセル): ", sel.pr.Number))
+		bottom = prompt + m.closeInput.View()
+		if m.closeErr != "" {
+			bottom += "  " + errorStyle.Render(m.closeErr)
+		}
+	} else if m.closeErr != "" {
+		bottom = errorStyle.Render(m.closeErr)
+	} else {
+		bottom = helpStyle.Render("↑/↓ navigate · enter open in browser · c close PR · / filter · q quit")
+	}
 
-	return top + "\n" + help
+	return top + "\n" + bottom
 }

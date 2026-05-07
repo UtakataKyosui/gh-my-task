@@ -49,4 +49,12 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
+
+	confirmPromptStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214")).
+				Bold(true)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true)
 )

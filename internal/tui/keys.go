@@ -7,6 +7,7 @@ type keyMap struct {
 	Down   key.Binding
 	Enter  key.Binding
 	Filter key.Binding
+	Close  key.Binding
 	Quit   key.Binding
 }
 
@@ -26,6 +27,10 @@ var keys = keyMap{
 	Filter: key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "filter"),
+	),
+	Close: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "close PR"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),

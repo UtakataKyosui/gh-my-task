@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/UtakataKyosui/gh-my-task/internal/ghclient"
 	"github.com/UtakataKyosui/gh-my-task/internal/jsonout"
@@ -13,6 +14,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "close" {
+		runClose(os.Args[2:])
+		return
+	}
+
 	var (
 		jsonMode     bool
 		state        string
@@ -84,6 +90,61 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: TUI failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runClose(args []string) {
+	fs := flag.NewFlagSet("close", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: gh my-task close <PR-number>")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "error: PR番号を指定してください")
+		fmt.Fprintln(os.Stderr, "  usage: gh my-task close <PR-number>")
+		os.Exit(1)
+	}
+
+	number, err := strconv.Atoi(fs.Arg(0))
+	if err != nil || number <= 0 {
+		fmt.Fprintf(os.Stderr, "error: 無効なPR番号 %q\n", fs.Arg(0))
+		os.Exit(1)
+	}
+
+	repo, err := repository.Current()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: not in a GitHub repository (no remote found)")
+		os.Exit(1)
+	}
+
+	owner := repo.Owner
+	name := repo.Name
+
+	pr, err := ghclient.FetchOne(owner, name, number)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: PR #%d の取得に失敗しました: %v\n", number, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("PR #%d: %s\n", pr.Number, pr.Title)
+	fmt.Printf("Author: %s  State: %s\n", pr.Author, pr.State)
+	fmt.Printf("URL: %s\n\n", pr.URL)
+	fmt.Printf("この PR を close しますか？ 確認のため PR 番号を入力してください: ")
+
+	var input string
+	_, _ = fmt.Scan(&input)
+
+	if input != strconv.Itoa(number) {
+		fmt.Println("abort: 番号が一致しないため、close をキャンセルしました")
+		os.Exit(0)
+	}
+
+	if err := ghclient.ClosePR(owner, name, number); err != nil {
+		fmt.Fprintf(os.Stderr, "error: PR #%d の close に失敗しました: %v\n", number, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✓ PR #%d を close しました\n", number)
 }
 
 func currentUser() string {
