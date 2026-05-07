@@ -21,14 +21,18 @@ type prItem struct {
 }
 
 func (p prItem) FilterValue() string { return p.pr.Title }
-func (p prItem) Title() string       { return badge(p.pr) + " " + p.pr.Title }
+func (p prItem) Title() string       { return badge(p.pr) + reviewIndicator(p.pr) + " " + p.pr.Title }
 func (p prItem) Description() string {
 	ago := humanTime(p.pr.UpdatedAt)
 	draft := ""
 	if p.pr.IsDraft {
 		draft = " " + draftStyle.String()
 	}
-	return fmt.Sprintf("#%d · %s · %s%s", p.pr.Number, p.pr.Author, ago, draft)
+	reviewSummary := ""
+	if len(p.pr.Reviews) > 0 {
+		reviewSummary = " · " + formatReviewSummary(p.pr.Reviews)
+	}
+	return fmt.Sprintf("#%d · %s · %s%s%s", p.pr.Number, p.pr.Author, ago, draft, reviewSummary)
 }
 
 func badge(pr ghclient.PR) string {
@@ -42,6 +46,55 @@ func badge(pr ghclient.PR) string {
 	default:
 		return badgeAuthor.String()
 	}
+}
+
+func reviewIndicator(pr ghclient.PR) string {
+	if !contains(pr.Categories, "review-requested") || len(pr.Reviews) == 0 {
+		return ""
+	}
+	switch dominantReviewState(pr.Reviews) {
+	case "APPROVED":
+		return reviewApprovedIndicator.String()
+	case "CHANGES_REQUESTED":
+		return reviewChangesIndicator.String()
+	default:
+		return reviewCommentedIndicator.String()
+	}
+}
+
+func dominantReviewState(reviews []ghclient.Review) string {
+	for _, r := range reviews {
+		if r.State == "CHANGES_REQUESTED" {
+			return "CHANGES_REQUESTED"
+		}
+	}
+	for _, r := range reviews {
+		if r.State == "APPROVED" {
+			return "APPROVED"
+		}
+	}
+	return "COMMENTED"
+}
+
+func formatReviewSummary(reviews []ghclient.Review) string {
+	approved, changes, commented := 0, 0, 0
+	for _, r := range reviews {
+		switch r.State {
+		case "APPROVED":
+			approved++
+		case "CHANGES_REQUESTED":
+			changes++
+		default:
+			commented++
+		}
+	}
+	if changes > 0 {
+		return reviewChangesStyle.Render(fmt.Sprintf("%d changes", changes))
+	}
+	if approved > 0 {
+		return reviewApprovedStyle.Render(fmt.Sprintf("%d approved", approved))
+	}
+	return reviewCommentedStyle.Render(fmt.Sprintf("%d commented", commented))
 }
 
 func contains(slice []string, val string) bool {

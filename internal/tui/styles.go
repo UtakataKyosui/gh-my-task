@@ -34,6 +34,29 @@ var (
 			Foreground(lipgloss.Color("243")).
 			SetString("draft")
 
+	reviewApprovedIndicator = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("82")).
+				Bold(true).
+				SetString("✓")
+
+	reviewChangesIndicator = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")).
+				Bold(true).
+				SetString("!")
+
+	reviewCommentedIndicator = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245")).
+				SetString("~")
+
+	reviewApprovedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("82"))
+
+	reviewChangesStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196"))
+
+	reviewCommentedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245"))
+
 	previewTitleStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("205"))

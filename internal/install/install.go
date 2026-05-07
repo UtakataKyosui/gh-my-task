@@ -19,7 +19,7 @@ const claudeMDSection = `
 |---|---|
 | ` + "`gh my-task`" + ` | TUI で PR 一覧 |
 | ` + "`gh my-task -j`" + ` | JSON で PR 一覧 |
-| ` + "`gh my-task -R`" + ` | レビュー状況付きで取得 |
+| ` + "`gh my-task -R`" + ` | レビュー状況付きで取得（インジケーター表示） |
 | ` + "`gh my-task prompt <N>`" + ` | PR #N のレビュー対応 Markdown プロンプトを stdout に出力 |
 | ` + "`gh my-task close <N>`" + ` | PR #N を close（番号入力確認あり） |
 
@@ -30,6 +30,19 @@ const claudeMDSection = `
 - ` + "`-a / --author-only`" + `: 自分が author のみ
 - ` + "`-r / --review-only`" + `: レビュー依頼のみ
 - ` + "`-R / --with-reviews`" + `: レビュー状況を同時取得
+
+### TUI のレビューインジケーター（` + "`-R`" + ` 使用時）
+
+` + "`-R`" + ` フラグを付けると、review-requested な PR にレビュー状態インジケーターが表示される。
+
+| バッジ表示 | 意味 |
+|---|---|
+| ` + "`[R]`" + ` | レビュー未着手（pending） |
+| ` + "`[R]✓`" + ` | APPROVED あり（緑） |
+| ` + "`[R]!`" + ` | CHANGES_REQUESTED あり（赤） |
+| ` + "`[R]~`" + ` | COMMENTED のみ（グレー） |
+
+description 欄にも ` + "`· 2 approved`" + ` / ` + "`· 1 changes`" + ` のサマリーが付く。
 
 ### AI Agent での活用例
 
@@ -51,6 +64,9 @@ description: gh my-task CLI を使い、現在のリポジトリで自分に関�
 ` + "`gh my-task`" + ` は GitHub CLI 拡張機能。現在のリポジトリで自分が author または
 review-requested な PR を素早く確認・操作できる。
 
+` + "`-R`" + ` フラグを付けると TUI の一覧にレビュー状態インジケーターが表示され、
+レビュー前後の PR を視覚的に区別できる。
+
 ## よく使うコマンド
 
 ### PR 一覧を取得する
@@ -61,6 +77,21 @@ gh my-task -j -R           # レビュー状況込み JSON
 gh my-task -j -s all       # 全ステート
 gh my-task -j -a           # 自分が author のみ
 ` + "```" + `
+
+### TUI でレビュー状態を確認する（` + "`-R`" + ` 推奨）
+
+` + "```" + `bash
+gh my-task -R              # TUI + レビューインジケーター
+` + "```" + `
+
+review-requested な PR のバッジに状態が付く:
+
+| バッジ | 意味 |
+|---|---|
+| ` + "`[R]`" + ` | レビュー未着手 |
+| ` + "`[R]✓`" + ` | APPROVED あり |
+| ` + "`[R]!`" + ` | CHANGES_REQUESTED あり |
+| ` + "`[R]~`" + ` | COMMENTED のみ |
 
 ### レビュー対応プロンプトを生成する
 
@@ -82,7 +113,7 @@ gh my-task close <PR番号>   # PR番号の入力確認後に close
 
 ## 使い方のパターン
 
-1. ` + "`gh my-task -j -R`" + ` でレビューが必要な PR を確認する
+1. ` + "`gh my-task -R`" + ` で TUI を起動し、レビュー状態インジケーターで優先度を判断する
 2. ` + "`gh my-task prompt <N>`" + ` でレビュー対応プロンプトを生成する
 3. 生成されたプロンプトを Claude Code に渡して対応する
 `
