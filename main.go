@@ -18,6 +18,10 @@ func main() {
 		runClose(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "prompt" {
+		runPrompt(os.Args[2:])
+		return
+	}
 
 	var (
 		jsonMode     bool
@@ -37,6 +41,11 @@ func main() {
 	flag.BoolVar(&reviewOnly, "r", false, "show only PRs where review is requested")
 	flag.BoolVar(&includeDraft, "include-drafts", true, "include draft PRs")
 	flag.BoolVar(&includeDraft, "d", true, "include draft PRs")
+
+	var withReviews bool
+	flag.BoolVar(&withReviews, "with-reviews", false, "fetch review status for each PR (slower)")
+	flag.BoolVar(&withReviews, "R", false, "fetch review status for each PR (slower)")
+
 	flag.Parse()
 
 	if authorOnly && reviewOnly {
@@ -64,6 +73,7 @@ func main() {
 		AuthorOnly:   authorOnly,
 		ReviewOnly:   reviewOnly,
 		IncludeDraft: includeDraft,
+		WithReviews:  withReviews,
 	}
 
 	prs, err := ghclient.Fetch(owner, name, opts)
@@ -90,6 +100,40 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: TUI failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runPrompt(args []string) {
+	fs := flag.NewFlagSet("prompt", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: gh my-task prompt <PR-number>")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "error: PR番号を指定してください")
+		fmt.Fprintln(os.Stderr, "  usage: gh my-task prompt <PR-number>")
+		os.Exit(1)
+	}
+
+	number, err := strconv.Atoi(fs.Arg(0))
+	if err != nil || number <= 0 {
+		fmt.Fprintf(os.Stderr, "error: 無効なPR番号 %q\n", fs.Arg(0))
+		os.Exit(1)
+	}
+
+	repo, err := repository.Current()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: not in a GitHub repository (no remote found)")
+		os.Exit(1)
+	}
+
+	pr, err := ghclient.FetchOne(repo.Owner, repo.Name, number)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: PR #%d の取得に失敗しました: %v\n", number, err)
+		os.Exit(1)
+	}
+
+	fmt.Print(ghclient.BuildPrompt(repo.Owner, repo.Name, pr))
 }
 
 func runClose(args []string) {

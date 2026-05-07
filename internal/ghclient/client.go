@@ -13,16 +13,31 @@ import (
 )
 
 type PR struct {
-	Number     int       `json:"number"`
-	Title      string    `json:"title"`
-	URL        string    `json:"url"`
-	Author     string    `json:"author"`
-	State      string    `json:"state"`
-	IsDraft    bool      `json:"isDraft"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-	Labels     []string  `json:"labels"`
-	Categories []string  `json:"categories"`
-	Body       string    `json:"body,omitempty"`
+	Number         int             `json:"number"`
+	Title          string          `json:"title"`
+	URL            string          `json:"url"`
+	Author         string          `json:"author"`
+	State          string          `json:"state"`
+	IsDraft        bool            `json:"isDraft"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+	Labels         []string        `json:"labels"`
+	Categories     []string        `json:"categories"`
+	Body           string          `json:"body,omitempty"`
+	HeadRef        string          `json:"headRef,omitempty"`
+	Reviews        []Review        `json:"reviews,omitempty"`
+	ReviewComments []ReviewComment `json:"reviewComments,omitempty"`
+}
+
+type Review struct {
+	Reviewer string `json:"reviewer"`
+	State    string `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED
+}
+
+type ReviewComment struct {
+	Reviewer string `json:"reviewer"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	Body     string `json:"body"`
 }
 
 type searchResponse struct {
@@ -50,6 +65,7 @@ type Options struct {
 	AuthorOnly   bool
 	ReviewOnly   bool
 	IncludeDraft bool
+	WithReviews  bool // fetch review status for each PR (slower)
 }
 
 func Fetch(owner, name string, opts Options) ([]PR, error) {
@@ -140,6 +156,23 @@ func Fetch(owner, name string, opts Options) ([]PR, error) {
 		return prs[i].UpdatedAt.After(prs[j].UpdatedAt)
 	})
 
+	if opts.WithReviews {
+		client2, err2 := api.DefaultRESTClient()
+		if err2 != nil {
+			return prs, nil // reviews are best-effort
+		}
+		var rwg sync.WaitGroup
+		for i := range prs {
+			rwg.Add(1)
+			go func(idx int) {
+				defer rwg.Done()
+				revs, _ := fetchReviewsWithClient(client2, owner, name, prs[idx].Number)
+				prs[idx].Reviews = revs
+			}(i)
+		}
+		rwg.Wait()
+	}
+
 	return prs, nil
 }
 
@@ -186,6 +219,66 @@ func appendUniq(slice []string, val string) []string {
 	return append(slice, val)
 }
 
+func FetchReviews(owner, name string, number int) ([]Review, error) {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return nil, err
+	}
+	return fetchReviewsWithClient(client, owner, name, number)
+}
+
+func fetchReviewsWithClient(client *api.RESTClient, owner, name string, number int) ([]Review, error) {
+	var items []struct {
+		User  struct{ Login string `json:"login"` } `json:"user"`
+		State string                                `json:"state"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=100", owner, name, number)
+	if err := client.Get(path, &items); err != nil {
+		return nil, err
+	}
+	// keep latest state per reviewer
+	latest := map[string]string{}
+	for _, item := range items {
+		if item.State == "PENDING" {
+			continue
+		}
+		latest[item.User.Login] = item.State
+	}
+	revs := make([]Review, 0, len(latest))
+	for reviewer, state := range latest {
+		revs = append(revs, Review{Reviewer: reviewer, State: state})
+	}
+	sort.Slice(revs, func(i, j int) bool { return revs[i].Reviewer < revs[j].Reviewer })
+	return revs, nil
+}
+
+func FetchReviewComments(owner, name string, number int) ([]ReviewComment, error) {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return nil, err
+	}
+	var items []struct {
+		User struct{ Login string `json:"login"` } `json:"user"`
+		Path string                                `json:"path"`
+		Line int                                   `json:"line"`
+		Body string                                `json:"body"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/comments?per_page=100", owner, name, number)
+	if err := client.Get(path, &items); err != nil {
+		return nil, err
+	}
+	comments := make([]ReviewComment, 0, len(items))
+	for _, item := range items {
+		comments = append(comments, ReviewComment{
+			Reviewer: item.User.Login,
+			Path:     item.Path,
+			Line:     item.Line,
+			Body:     item.Body,
+		})
+	}
+	return comments, nil
+}
+
 func FetchOne(owner, name string, number int) (PR, error) {
 	client, err := api.DefaultRESTClient()
 	if err != nil {
@@ -202,13 +295,16 @@ func FetchOne(owner, name string, number int) (PR, error) {
 		User      struct {
 			Login string `json:"login"`
 		} `json:"user"`
+		Head struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
 	}
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, name, number)
 	if err := client.Get(path, &resp); err != nil {
 		return PR{}, err
 	}
 	t, _ := time.Parse(time.RFC3339, resp.UpdatedAt)
-	return PR{
+	pr := PR{
 		Number:    resp.Number,
 		Title:     resp.Title,
 		URL:       resp.HTMLURL,
@@ -217,7 +313,21 @@ func FetchOne(owner, name string, number int) (PR, error) {
 		IsDraft:   resp.Draft,
 		UpdatedAt: t,
 		Body:      resp.Body,
-	}, nil
+		HeadRef:   resp.Head.Ref,
+	}
+	// fetch reviews and review comments concurrently
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		pr.Reviews, _ = FetchReviews(owner, name, number)
+	}()
+	go func() {
+		defer wg.Done()
+		pr.ReviewComments, _ = FetchReviewComments(owner, name, number)
+	}()
+	wg.Wait()
+	return pr, nil
 }
 
 func ClosePR(owner, name string, number int) error {

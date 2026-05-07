@@ -283,6 +283,21 @@ func (m model) buildPreview() string {
 	}
 	line("URL", pr.URL)
 
+	if len(pr.Reviews) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
+		sb.WriteString("\n")
+		sb.WriteString(previewLabelStyle.Render("Reviews:"))
+		sb.WriteString("\n")
+		for _, r := range pr.Reviews {
+			icon := reviewStateIcon(r.State)
+			sb.WriteString(fmt.Sprintf("  %s %-20s %s\n", icon, r.Reviewer, r.State))
+		}
+		if len(pr.ReviewComments) > 0 {
+			sb.WriteString(previewLabelStyle.Render(fmt.Sprintf("Review Comments: %d件\n", len(pr.ReviewComments))))
+		}
+	}
+
 	if pr.Body != "" {
 		sb.WriteString("\n")
 		sb.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
@@ -295,6 +310,17 @@ func (m model) buildPreview() string {
 	}
 
 	return sb.String()
+}
+
+func reviewStateIcon(state string) string {
+	switch state {
+	case "APPROVED":
+		return "✅"
+	case "CHANGES_REQUESTED":
+		return "❌"
+	default:
+		return "💬"
+	}
 }
 
 func formatState(pr ghclient.PR) string {
