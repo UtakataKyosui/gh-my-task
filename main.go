@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/UtakataKyosui/gh-my-task/internal/ghclient"
+	"github.com/UtakataKyosui/gh-my-task/internal/install"
 	"github.com/UtakataKyosui/gh-my-task/internal/jsonout"
 	"github.com/UtakataKyosui/gh-my-task/internal/tui"
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -20,6 +21,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "prompt" {
 		runPrompt(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "install" {
+		install.Run()
 		return
 	}
 
