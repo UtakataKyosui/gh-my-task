@@ -123,6 +123,55 @@ The daemon inherits `gh auth` from the parent shell via `go-gh`. If running in a
 
 ---
 
+## PR Review (`review` subcommand)
+
+Validate and post Claude-generated PR reviews with mandatory suggestion blocks.
+
+### Workflow
+
+```bash
+# 1. Generate a Claude-ready prompt (includes PR diff + schema + review rules)
+gh my-task review prompt 123 | claude --print > review.json
+
+# 2. Validate without posting
+gh my-task review validate -f review.json --pr 123
+
+# 3. Post to GitHub
+gh my-task review post 123 -f review.json
+```
+
+### Review subcommands
+
+| Command | Description |
+|---|---|
+| `gh my-task review schema` | Print JSON Schema to stdout |
+| `gh my-task review prompt <PR>` | Generate Claude-ready prompt for a PR |
+| `gh my-task review validate -f <file>` | Validate review JSON without posting |
+| `gh my-task review post <PR> -f <file>` | Validate and post review to GitHub |
+
+### Review flags
+
+| Flag | Commands | Description |
+|---|---|---|
+| `-f <file>` | validate, post | Review JSON file path (required) |
+| `--pr <N>` | validate | PR number for diff-range validation |
+| `--min-comments <N>` | validate, post | Override minimum comment count |
+| `--strict` | validate, post | Treat warnings as errors |
+| `--dry-run` | post | Print API payload without posting |
+
+### Validation rules
+
+| # | Rule |
+|---|---|
+| 1 | `event`, `summary`, `comments` are required |
+| 2 | `summary` must not contain ` ```suggestion ` blocks |
+| 3 | Minimum comment count scales with changed-file count (≤4→1, 5–20→3, 21+→5) |
+| 4a | Each comment needs `suggestion` OR `skip_suggestion: true` + `reason` |
+| 4b | `skip_suggestion: true` without `reason` is rejected |
+| 4c | More than 50% skip_suggestion triggers a warning (error with `--strict`) |
+
+---
+
 ## PR Badges
 
 - `[A]` — You are the author
