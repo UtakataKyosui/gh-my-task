@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,10 @@ import (
 	"github.com/UtakataKyosui/gh-my-task/internal/ghclient"
 	"github.com/UtakataKyosui/gh-my-task/internal/install"
 	"github.com/UtakataKyosui/gh-my-task/internal/jsonout"
+	"github.com/UtakataKyosui/gh-my-task/internal/review/prompt"
+	"github.com/UtakataKyosui/gh-my-task/internal/review/render"
+	"github.com/UtakataKyosui/gh-my-task/internal/review/schema"
+	"github.com/UtakataKyosui/gh-my-task/internal/review/validator"
 	"github.com/UtakataKyosui/gh-my-task/internal/schedule"
 	"github.com/UtakataKyosui/gh-my-task/internal/tui"
 	"github.com/cli/go-gh/v2/pkg/repository"
@@ -29,6 +34,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "schedule" {
 		schedule.Dispatch(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "review" {
+		runReview(os.Args[2:])
 		return
 	}
 
@@ -221,3 +230,216 @@ func runClose(args []string) {
 	fmt.Printf("✓ PR #%d を close しました\n", number)
 }
 
+func runReview(args []string) {
+	if len(args) == 0 {
+		reviewUsage()
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "schema":
+		fmt.Println(string(schema.SchemaJSON))
+	case "prompt":
+		runReviewPrompt(args[1:])
+	case "validate":
+		runReviewValidate(args[1:])
+	case "post":
+		runReviewPost(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown review subcommand: %s\n", args[0])
+		reviewUsage()
+		os.Exit(1)
+	}
+}
+
+func reviewUsage() {
+	fmt.Fprintln(os.Stderr, `gh my-task review — structured PR review with mandatory suggestions
+
+USAGE:
+  gh my-task review schema                      Print JSON Schema to stdout
+  gh my-task review prompt <PR>                 Generate Claude prompt for a PR
+  gh my-task review validate -f <file> [flags]  Validate review JSON without posting
+  gh my-task review post <PR> -f <file> [flags] Validate and post review to GitHub
+
+FLAGS (validate / post):
+  -f string        Path to review JSON file (required)
+  --pr int         PR number for diff-range validation (validate only)
+  --min-comments   Override minimum comment count
+  --strict         Treat warnings as errors
+  --dry-run        (post only) Print API payload without posting`)
+}
+
+func runReviewPrompt(args []string) {
+	fs := flag.NewFlagSet("review prompt", flag.ExitOnError)
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, "usage: gh my-task review prompt <PR>") }
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "error: PR番号を指定してください")
+		os.Exit(1)
+	}
+	prNum, err := strconv.Atoi(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: invalid PR number: %s\n", fs.Arg(0))
+		os.Exit(1)
+	}
+
+	client, err := ghclient.NewReviewClient()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	pr, err := client.GetPR(prNum)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	files, err := client.GetFiles(prNum)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	p, err := prompt.Build(client.Owner(), client.Repo(), prompt.PRData{
+		Number:       prNum,
+		Title:        pr.Title,
+		Author:       pr.User.Login,
+		ChangedFiles: pr.ChangedFiles,
+		Diff:         ghclient.BuildDiff(files),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Print(p)
+}
+
+func runReviewValidate(args []string) {
+	fs := flag.NewFlagSet("review validate", flag.ExitOnError)
+	file := fs.String("f", "", "review JSON file path")
+	prNum := fs.Int("pr", 0, "PR number for diff-range validation")
+	minComments := fs.Int("min-comments", 0, "override minimum comment count")
+	strict := fs.Bool("strict", false, "treat warnings as errors")
+	fs.Parse(args)
+
+	if *file == "" {
+		fmt.Fprintln(os.Stderr, "error: missing required flag: -f <review.json>")
+		os.Exit(1)
+	}
+
+	rev, err := loadReview(*file)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	opts := validator.Options{MinComments: *minComments, Strict: *strict}
+	if *prNum > 0 {
+		client, err := ghclient.NewReviewClient()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		pr, err := client.GetPR(*prNum)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		opts.ChangedFiles = pr.ChangedFiles
+	}
+
+	res := validator.Validate(rev, opts)
+	printValidationResult(res)
+	if !res.OK() {
+		os.Exit(1)
+	}
+}
+
+func runReviewPost(args []string) {
+	fs := flag.NewFlagSet("review post", flag.ExitOnError)
+	file := fs.String("f", "", "review JSON file path")
+	minComments := fs.Int("min-comments", 0, "override minimum comment count")
+	strict := fs.Bool("strict", false, "treat warnings as errors")
+	dryRun := fs.Bool("dry-run", false, "print API payload without posting")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "error: usage: gh my-task review post <PR> -f <review.json>")
+		os.Exit(1)
+	}
+	prNum, err := strconv.Atoi(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: invalid PR number: %s\n", fs.Arg(0))
+		os.Exit(1)
+	}
+	if *file == "" {
+		fmt.Fprintln(os.Stderr, "error: missing required flag: -f <review.json>")
+		os.Exit(1)
+	}
+
+	rev, err := loadReview(*file)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	client, err := ghclient.NewReviewClient()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	pr, err := client.GetPR(prNum)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	opts := validator.Options{
+		MinComments:  *minComments,
+		Strict:       *strict,
+		ChangedFiles: pr.ChangedFiles,
+	}
+	res := validator.Validate(rev, opts)
+	printValidationResult(res)
+	if !res.OK() {
+		os.Exit(1)
+	}
+
+	payload := render.Build(rev)
+
+	if *dryRun {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(payload); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	resp, err := client.PostReview(prNum, payload)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Review posted: %s\n", resp.HTMLURL)
+}
+
+func loadReview(path string) (*schema.Review, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return schema.Decode(data)
+}
+
+func printValidationResult(res *validator.Result) {
+	for _, w := range res.Warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
+	for _, e := range res.Errors {
+		fmt.Fprintln(os.Stderr, "error:", e)
+	}
+	if res.OK() {
+		fmt.Fprintln(os.Stderr, "validation passed")
+	}
+}

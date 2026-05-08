@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "gh-code-review/v1",
+  "title": "GitHub Pull Request Review",
+  "description": "Structured PR review output for gh-my-task review. Each inline comment MUST include a suggestion block or skip_suggestion:true with reason.",
+  "type": "object",
+  "required": ["event", "summary", "comments"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "event": {
+      "type": "string",
+      "enum": ["COMMENT", "REQUEST_CHANGES", "APPROVE"],
+      "description": "Review event type. Use COMMENT for general feedback, REQUEST_CHANGES when changes are required, APPROVE when the PR is ready to merge."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Overall review body. MUST NOT contain ```suggestion blocks. Use plain text and Markdown prose only. Code suggestions belong exclusively in inline comments."
+    },
+    "comments": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Inline review comments. Each comment targets a specific line in the diff.",
+      "items": {
+        "type": "object",
+        "required": ["path", "line", "body"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path relative to repository root (e.g. src/foo.ts)"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line number in the diff hunk to attach the comment to. MUST be within the PR diff range."
+          },
+          "side": {
+            "type": "string",
+            "enum": ["RIGHT", "LEFT"],
+            "default": "RIGHT",
+            "description": "RIGHT = new version of the file (post-change). LEFT = old version. Defaults to RIGHT."
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional. Starting line for multi-line comments. Must be <= line."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Explanation text for this comment. Do NOT include the suggestion block here; set the suggestion field instead."
+          },
+          "suggestion": {
+            "type": "string",
+            "description": "Replacement code. Will be rendered as a ```suggestion block. REQUIRED unless skip_suggestion is true."
+          },
+          "skip_suggestion": {
+            "type": "boolean",
+            "description": "Set to true only when a code suggestion is genuinely impossible (e.g. design-level discussion). Requires reason."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Required when skip_suggestion is true. Explain why no code suggestion is provided (e.g. 'design-discussion', 'architectural-concern')."
+          }
+        }
+      }
+    }
+  }
+}
